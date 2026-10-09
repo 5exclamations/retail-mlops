@@ -15,7 +15,7 @@ main{padding:20px 24px;display:grid;gap:16px;grid-template-columns:repeat(12,1fr
 .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;grid-column:span 12}
 @media(min-width:900px){.s3{grid-column:span 3}.s4{grid-column:span 4}.s6{grid-column:span 6}.s8{grid-column:span 8}}
 .big{font-size:28px;font-weight:650;font-variant-numeric:tabular-nums}.sub{color:var(--mute);font-size:12px}
-table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}th,td{padding:6px 8px;text-align:right;border-bottom:1px solid var(--line)}th:first-child,td:first-child{text-align:left}th{color:var(--mute);font-weight:600;font-size:12px}
+table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}th,td{padding:6px 8px;text-align:right;border-bottom:1px solid var(--line)}th:first-child,td:first-child,td.l,th.l{text-align:left}th{color:var(--mute);font-weight:600;font-size:12px}
 .bar{display:grid;grid-template-columns:130px 1fr 56px;gap:8px;align-items:center;margin:5px 0;font-size:12px}.track{background:var(--bg);border-radius:4px;height:10px;position:relative;overflow:hidden}.fill{height:100%;border-radius:4px;background:var(--accent)}
 .ok{color:var(--ok)}.warn{color:var(--warn)}.alert,.bad,.failed,.rejected{color:var(--bad)}.promoted{color:var(--ok)}
 .note{color:var(--mute);font-size:12px;margin-top:8px}.empty{color:var(--mute);padding:8px 0}
@@ -32,6 +32,7 @@ table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}th,t
   <section class="card s6"><h2>Promotion gates (latest model)</h2><table id="gates"></table></section>
   <section class="card s6"><h2>Feature drift (PSI vs training reference)</h2><div id="psi"></div><div class="note">warn ≥ 0.10 · alert ≥ 0.25 and KS-significant</div></section>
   <section class="card s6"><h2>Live WAPE by forecast horizon</h2><div id="hor"></div><div class="note" id="hor-note"></div></section>
+  <section class="card"><h2>Live bias &amp; WAPE by category</h2><table id="cat"></table><div class="note">Offsetting category errors can hide in the aggregate bias.</div></section>
   <section class="card"><h2>Retraining history</h2><table id="hist"></table></section>
 </main>
 <script>
@@ -57,11 +58,13 @@ async function load(){
     $('drift').textContent=d.status==='ok'?(d.drifted?'DRIFTED':'stable'):'n/a';$('drift').className='big '+(d.drifted?'bad':'ok');
     $('drift-sub').textContent=d.status==='ok'?`${pct(d.drift_share,0)} of features in alert · ${d.n_current} rows`:`insufficient data (${d.n_current||0})`;
     bars($('psi'),(d.features||[]).map(x=>({k:x.feature,v:x.psi,t:f(x.psi,2),cls:x.status,c:x.status==='alert'?'var(--bad)':x.status==='warn'?'var(--warn)':'var(--ok)'})),0.5);
+    const bc=p.by_category||{};
+    $('cat').innerHTML='<tr><th>category</th><th>WAPE</th><th>bias</th></tr>'+Object.entries(bc).map(([k,v])=>`<tr><td>${k}</td><td>${f(v.wape)}</td><td class="${Math.abs(v.bias)>0.10?'bad':''}">${pct(v.bias)}</td></tr>`).join('');
     const h=p.by_horizon||{};bars($('hor'),Object.keys(h).sort((a,b)=>a-b).map(k=>({k:'+'+k+' day'+(k>1?'s':''),v:h[k].wape,t:f(h[k].wape)})),0.6);
     $('hor-note').textContent=Object.keys(h).length?'Model inputs are lead-invariant (all lags ≥ 7 days), so flat bars are expected.':'';
   }catch(e){$('wape-sub').textContent='no monitoring report yet — POST /monitoring/refresh'}
   try{const h=await j('/retraining/history');
-    $('hist').innerHTML='<tr><th>#</th><th>finished</th><th>trigger</th><th>status</th><th>version</th></tr>'+(h.map(r=>`<tr><td>${r.id}</td><td>${(r.finished_at||'').slice(0,19)}</td><td style="text-align:left">${r.trigger}</td><td class="${r.status}">${r.status}</td><td>${r.model_version||'–'}</td></tr>`).join('')||'<tr><td colspan=5 class="empty">no retraining runs yet</td></tr>');
+    $('hist').innerHTML='<tr><th>#</th><th>finished</th><th class="l">trigger</th><th>status</th><th>version</th></tr>'+(h.map(r=>`<tr><td>${r.id}</td><td>${(r.finished_at||'').slice(0,19)}</td><td class="l">${r.trigger}</td><td class="${r.status}">${r.status}</td><td>${r.model_version||'–'}</td></tr>`).join('')||'<tr><td colspan=5 class="empty">no retraining runs yet</td></tr>');
   }catch(e){}
 }
 load();setInterval(load,30000);

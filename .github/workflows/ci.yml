@@ -105,13 +105,17 @@ jobs:
           curl -sf -X POST localhost:8000/predict -H 'content-type: application/json' \
             -d "{\"instances\":[{\"store_id\":\"S01\",\"sku_id\":\"K001\",\"date\":\"$D\",\"promo\":0}]}" | tee /tmp/pred.json
           grep -q '"prediction"' /tmp/pred.json
-          curl -s -o /dev/null -w "%{http_code}" -X POST localhost:8000/ground-truth -H 'content-type: application/json' -d '{"records":[]}' | grep -q 422
+          set -a; . ./.env; set +a
+          # admin endpoints: 401 without a key, 422 for an invalid body with the key
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST localhost:8000/ground-truth -H 'content-type: application/json' -d '{"records":[]}')" = 401
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST localhost:8000/ground-truth -H "X-API-Key: $ADMIN_API_KEY" -H 'content-type: application/json' -d '{"records":[]}')" = 422
           curl -sf localhost:8000/metrics | grep -E 'retail_predictions_total|retail_model_info'
       - name: monitoring refresh + retrain job
         run: |
-          curl -sf -X POST localhost:8000/monitoring/refresh -H "X-API-Key: change-me-locally" > /dev/null
+          set -a; . ./.env; set +a
+          curl -sf -X POST localhost:8000/monitoring/refresh -H "X-API-Key: $ADMIN_API_KEY" > /dev/null
           docker compose run --rm jobs python -m retail_mlops retrain --force   # no fresh data -> deferred
-          curl -sf -X POST localhost:8000/monitoring/refresh -H "X-API-Key: change-me-locally" > /dev/null
+          curl -sf -X POST localhost:8000/monitoring/refresh -H "X-API-Key: $ADMIN_API_KEY" > /dev/null
           curl -sf localhost:8000/metrics | grep 'retail_retrain_runs{status="deferred"}'
       - name: Prometheus really scrapes the API
         run: |
