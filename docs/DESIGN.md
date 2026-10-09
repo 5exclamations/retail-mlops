@@ -24,29 +24,28 @@ lag ≥ 7 days (lags 7/14/21/28, rolling mean 7/28, rolling std 28, promo at lag
 `ForecastCfg` refuses lags shorter than the horizon, and tests check that altering recent units cannot change a
 row's features and that serving-time features equal training features.
 Models: seasonal-naive and moving-average baselines; Ridge (one-hot + scaled numerics); HistGradientBoosting with
-Poisson loss and native categorical handling. Selection on the validation window; the selected model is the
-one evaluated on test and shipped (not refit on train+valid, so what is measured is what is served).
-Primary metric WAPE; also MAE, RMSE, relative bias.
+Poisson loss and native categorical handling. **Selection uses walk-forward CV only** (folds immediately before the
+test window); the selected recipe is refit on all pre-test data and evaluated once on the test window. If a champion
+exists, the test window starts after the champion's last data day so neither model has seen it.
+Primary metric WAPE; also MAE, RMSE, relative bias; breakdowns by category/store/SKU are logged per run.
 
 ## 4. Experiment tracking
 One MLflow run per training call with nested runs per model. Logged: flattened config, data hash, git SHA,
-Python/sklearn versions, split dates and sizes, validation + preprocessing reports, per-model valid/test metrics,
-gate results, per-category metrics, the model, and a `bundle/` (exact training config, metadata, monitoring
-reference sample + reference predictions). Registry: model `retail-demand-forecaster`, versions carry tags;
-aliases `candidate`, `champion`, `previous`.
+Python/sklearn versions, split dates, validation + preprocessing reports, per-model CV/test metrics, gate results,
+per-category/store/SKU breakdowns, the model (skops) and a `bundle/` (training config, metadata incl. artifact SHA-256,
+monitoring reference sample). Registry: aliases `candidate`, `champion`, `previous`; versions are never deleted.
 
-**Promotion gates** (`registry/gates.py`, thresholds in config): data validation passed; ≥3% relative WAPE
-improvement over best baseline; |bias| ≤ 5%; no category >5% worse than baseline; not worse than the current
-champion **re-scored on the same new test window**. `rollback` points `champion` back to `previous`; the API picks
-this up on its next alias check.
+**Promotion gates** (`registry/gates.py`, thresholds in config): data validation; >=3% relative WAPE improvement over the
+best baseline; |bias| <= 5%; no category >5% worse than baseline; >= `min_holdout_days` fresh days; >= 1% relative
+improvement over the champion on identical fresh rows; and a paired block-bootstrap CI (resampling days) that excludes
+0. Each failed check yields a reason string. See README for the full protocol and demo behaviour.
 
 ## 5. Deployment architecture
 FastAPI (`/predict`, `/ground-truth`, `/model`, `/ready`, `/health`, `/metrics`, `/monitoring/*`, `/admin/reload`)
 loads `models:/…@champion` and builds features from SQL history using the same code as training. Batch scoring
 (`batch-predict`) uses the same predictor. docker-compose: Postgres, MLflow server (Postgres backend, proxied
-artifacts), API, Prometheus; one image for all. Admin/ground-truth endpoints accept an `X-API-Key` when
-`ADMIN_API_KEY` is set. Models are stored with cloudpickle (MLflow's default skops refuses gradient-boosting
-trees); only load models from a registry you control.
+artifacts), API, Prometheus; one image for all. Admin/ground-truth endpoints are disabled until `ADMIN_API_KEY` is set, then require `X-API-Key`. Models are stored in skops format with an allow-list of reviewed types and a registry-held SHA-256
+verified before loading.
 
 ## 6. Monitoring
 Prometheus: request count/latency, model-inference latency, prediction counts and value histogram, error counters
@@ -72,9 +71,7 @@ determinism. Same-machine reruns should reproduce metrics; cross-platform bit-id
 - Point forecasts only (no prediction intervals); horizon fixed at 7 days; no new-product (cold-start) handling –
   unknown series return 422, short histories are flagged `low_history`.
 - Planned future prices default to the last known price; promos default to none unless supplied.
-- Retrain gate tie-handling: a candidate within noise of the champion is promoted (observed: v2 vs v1, 0.3016 vs
-  0.3017). The champion may also have trained on part of the new test window, which flatters it; a minimum-improvement
-  margin or significance test would be better.
+- The fresh-holdout protocol means a challenger never learns from the days used to judge it (see README trade-offs).
 - The drift reference mixes all seasons, so seasonal swings can look like drift; thresholds are untuned defaults.
   With a drift scenario of this size the monitors flagged only warnings, not an automatic retrain.
 - Live accuracy only covers predictions whose actuals have arrived; coverage is exported.
