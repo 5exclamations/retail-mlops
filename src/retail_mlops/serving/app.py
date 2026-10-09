@@ -2,21 +2,32 @@
 from __future__ import annotations
 
 import asyncio
+import datetime as dt
+import hmac
 import os
 import threading
 import time
 import uuid
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import pandas as pd
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from sqlalchemy import text
 
 from retail_mlops import __version__
 from retail_mlops.config import Config, load_config
-from retail_mlops.db import get_engine, init_db, log_predictions, read_sales, upsert_sales
+from retail_mlops.db import (
+    get_engine,
+    init_db,
+    log_predictions,
+    read_retrain_history,
+    read_sales,
+    retrain_summary,
+    upsert_sales,
+)
 from retail_mlops.monitoring.metrics import Metrics
 from retail_mlops.monitoring.service import build_report
 from retail_mlops.registry import store
@@ -38,7 +49,10 @@ class AppState:
         with self.lock:
             self.bundle = bundle
         if bundle:
-            self.metrics.set_model(bundle.name, bundle.version, bundle.run_id, bundle.reference_wape)
+            ts = None
+            if bundle.metadata.get("trained_at"):
+                ts = dt.datetime.fromisoformat(bundle.metadata["trained_at"]).timestamp()
+            self.metrics.set_model(bundle.name, bundle.version, bundle.run_id, bundle.reference_wape, ts)
 
     def try_load_champion(self) -> bool:
         try:
@@ -58,6 +72,8 @@ class AppState:
             return None
         self.report = build_report(self.engine, self.bundle, self.cfg.monitoring)
         self.metrics.update_from_report(self.report)
+        self.metrics.update_retrains(retrain_summary(self.engine))
+        self.metrics.monitor_refresh_ts.set(time.time())
         return self.report
 
 
@@ -102,8 +118,11 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         return request.app.state.s
 
     def require_admin(x_api_key: str | None = Header(None)) -> None:
+        """Default-deny: admin/ingest endpoints stay disabled until ADMIN_API_KEY is configured."""
         expected = os.getenv("ADMIN_API_KEY")
-        if expected and x_api_key != expected:
+        if not expected:
+            raise HTTPException(403, "admin endpoints are disabled: set ADMIN_API_KEY")
+        if not x_api_key or not hmac.compare_digest(x_api_key.encode(), expected.encode()):
             raise HTTPException(401, "invalid or missing X-API-Key")
 
     @app.middleware("http")
@@ -147,7 +166,10 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         return {"name": b.name, "version": b.version, "run_id": b.run_id, "algorithm": md.get("selected_model"),
                 "trained_at": md.get("trained_at"), "data_hash": md.get("data_hash"), "train_end": md.get("train_end"),
                 "horizon_days": b.cfg.forecast.horizon, "test_metrics": md.get("metrics", {}).get("test"),
-                "baselines_test": {k: v["test"] for k, v in md.get("baselines", {}).items()}}
+                "backtest": md.get("metrics", {}).get("backtest"), "test_window": [md.get("test_start"), md.get("data_end")],
+                "baselines_test": {k: v["test"] for k, v in md.get("baselines", {}).items()},
+                "gates": md.get("gates"), "vs_champion": md.get("paired_vs_champion"),
+                "model_sha256": md.get("model_sha256")}
 
     @app.post("/predict", response_model=PredictResponse)
     def predict(body: PredictRequest, request: Request):
@@ -184,6 +206,8 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         s = st(request)
         df = pd.DataFrame([r.model_dump() for r in body.records])
         df["date"] = pd.to_datetime(df["date"])
+        if not s.cfg.monitoring.allow_future_ground_truth and df["date"].max().date() > dt.datetime.now(dt.UTC).date():
+            raise HTTPException(422, {"message": "invalid records", "problems": ["ground truth dated in the future"]})
         existing = read_sales(s.engine, start=df["date"].min() - pd.Timedelta(days=70), end=df["date"].max(),
                               series=list(df[["store_id", "sku_id"]].drop_duplicates().itertuples(index=False, name=None)))
         meta = existing.groupby(["store_id", "sku_id"])["category"].first().to_dict()
@@ -225,6 +249,14 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         if not s.try_load_champion():
             raise HTTPException(503, "could not load champion")
         return {"model_version": s.bundle.version}
+
+    @app.get("/retraining/history")
+    def retraining_history(request: Request):
+        return read_retrain_history(st(request).engine)
+
+    @app.get("/dashboard", response_class=HTMLResponse, include_in_schema=False)
+    def dashboard():
+        return HTMLResponse((Path(__file__).parent / "dashboard.html").read_text())
 
     @app.get("/metrics")
     def metrics(request: Request):

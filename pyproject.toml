@@ -15,6 +15,9 @@ dependencies = { file = ["requirements.in"] }
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+retail_mlops = ["serving/dashboard.html"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra --strict-markers"

@@ -5,19 +5,41 @@ groups:
         expr: histogram_quantile(0.95, sum(rate(retail_http_request_duration_seconds_bucket{endpoint="/predict"}[5m])) by (le)) > 1
         for: 5m
         annotations: {summary: "p95 /predict latency above 1s"}
-      - alert: PredictionErrorRate
-        expr: sum(rate(retail_prediction_errors_total{type!="validation"}[5m])) > 0.05
+      - alert: PredictionServerErrors
+        # validation errors are caller mistakes; everything else is ours
+        expr: sum(rate(retail_prediction_errors_total{type!="validation"}[5m])) > 0.02
         for: 5m
         annotations: {summary: "server-side prediction errors"}
       - alert: InputDriftDetected
         expr: retail_input_drift_detected == 1
         for: 30m
-        annotations: {summary: "share of drifting input features above threshold"}
+        annotations: {summary: "share of monitored input features in alert state is above threshold"}
       - alert: PredictionDistributionShift
         expr: retail_prediction_psi > 0.25
         for: 30m
-        annotations: {summary: "prediction PSI above 0.25"}
+        annotations: {summary: "prediction PSI vs training reference above 0.25"}
       - alert: ForecastAccuracyDegraded
+        # only set when enough matured actuals exist; compares live WAPE with the model's test-time WAPE
         expr: retail_performance_degraded == 1
         for: 1h
-        annotations: {summary: "live WAPE far above training-time test WAPE"}
+        annotations: {summary: "live WAPE >= 1.25x the training-time test WAPE"}
+      - alert: GroundTruthMissing
+        # forecasts are being made but no accuracy can be computed
+        expr: retail_pending_predictions > 500 and retail_ground_truth_samples == 0
+        for: 12h
+        annotations: {summary: "predictions are not getting matured actuals; accuracy is unmonitored"}
+      - alert: RetrainingFailed
+        expr: increase(retail_retrain_runs{status="failed"}[1h]) > 0
+        annotations: {summary: "a retraining run failed"}
+      - alert: ModelStale
+        expr: time() - retail_model_trained_timestamp_seconds > 45 * 86400
+        for: 1h
+        annotations: {summary: "served model is older than 45 days"}
+      - alert: MonitoringStalled
+        expr: time() - retail_monitoring_last_refresh_timestamp_seconds > 900
+        for: 5m
+        annotations: {summary: "monitoring refresh has not run for 15 minutes"}
+      - alert: ApiDown
+        expr: up{job="retail-api"} == 0
+        for: 2m
+        annotations: {summary: "Prometheus cannot scrape the API"}

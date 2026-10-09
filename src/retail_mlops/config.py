@@ -34,8 +34,9 @@ class ForecastCfg(BaseModel):
     horizon: int = 7
     lags: list[int] = [7, 14, 21, 28]
     rolling_windows: list[int] = [7, 28]
-    valid_days: int = 56
-    test_days: int = 56
+    test_days: int = 56  # final held-out window (never used for selection)
+    backtest_folds: int = 3  # walk-forward folds taken immediately before the test window
+    backtest_step_days: int = 28
 
     @model_validator(mode="after")
     def _lags_respect_horizon(self) -> ForecastCfg:
@@ -58,7 +59,11 @@ class ModelsCfg(BaseModel):
 
 class GatesCfg(BaseModel):
     min_improvement_vs_baseline: float = 0.03  # relative WAPE reduction vs best baseline
-    max_regression_vs_champion: float = 0.0  # relative WAPE increase tolerated vs champion (same holdout)
+    min_improvement_vs_champion: float = 0.01  # required relative WAPE reduction vs champion on the fresh holdout
+    require_significance: bool = True  # paired block-bootstrap CI of the improvement must exclude 0
+    bootstrap_samples: int = 1000
+    significance_level: float = 0.05
+    min_holdout_days: int = 14  # fresh days (after the champion's data) needed for a fair comparison
     max_abs_bias: float = 0.05  # |sum(pred-actual)/sum(actual)|
     max_segment_regression_vs_baseline: float = 0.05  # per-category WAPE vs baseline, relative
     require_valid_data: bool = True
@@ -76,8 +81,10 @@ class MonitoringCfg(BaseModel):
     drift_share_alert: float = 0.25  # share of monitored features in alert -> "drifted"
     perf_degradation_ratio: float = 1.25  # live WAPE / reference test WAPE
     min_ground_truth: int = 100
+    maturity_coverage: float = 0.95  # a date is 'matured' when >= this share of series have actuals
     refresh_seconds: int = 300
     reload_check_seconds: int = 60
+    allow_future_ground_truth: bool = False
 
 
 class RetrainCfg(BaseModel):

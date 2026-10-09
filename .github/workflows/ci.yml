@@ -35,6 +35,9 @@ jobs:
       - run: python -m retail_mlops --config configs/smoke.yaml generate
       # full default dataset: the candidate must beat baselines and clear every promotion gate
       - run: python -m retail_mlops generate && python -m retail_mlops train --require-promotion --report reports/train.json
+      # reproducibility: identical data + seed in a fresh tracking store must give identical metrics
+      - run: MLFLOW_TRACKING_URI=sqlite:///repro.db python -m retail_mlops train --require-promotion --report reports/train_repeat.json
+      - run: python scripts/compare_reports.py reports/train.json reports/train_repeat.json
       - uses: actions/upload-artifact@v4
         with: {name: training-report, path: reports/}
 
@@ -67,3 +70,56 @@ jobs:
           docker run -d --name api -p 8000:8000 retail-mlops:ci
           for i in $(seq 1 30); do curl -sf localhost:8000/health && exit 0; sleep 2; done
           docker logs api; exit 1
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install pip-audit bandit
+      - run: pip-audit -r requirements.txt
+      - run: bandit -r src -ll
+      - name: secret scan
+        run: docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:latest detect --source /repo --no-banner
+
+  compose-e2e:
+    runs-on: ubuntu-latest
+    needs: [docker-build]
+    steps:
+      - uses: actions/checkout@v4
+      - run: cp .env.example .env
+      - run: docker run --rm --entrypoint promtool -v "$PWD/monitoring:/m:ro" prom/prometheus:v2.53.0 check rules /m/alerts.yml
+      - run: docker compose up -d --build postgres mlflow
+      - run: for i in $(seq 1 60); do curl -sf localhost:5000/health && exit 0; sleep 2; done; docker compose logs mlflow; exit 1
+      - name: data -> train (gated) -> promote
+        run: |
+          docker compose run --rm jobs python -m retail_mlops generate
+          docker compose run --rm jobs python -m retail_mlops ingest
+          docker compose run --rm jobs python -m retail_mlops train --source db --require-promotion
+      - run: docker compose up -d api prometheus
+      - run: for i in $(seq 1 60); do curl -sf localhost:8000/ready && exit 0; sleep 2; done; docker compose logs api; exit 1
+      - name: predict + metrics
+        run: |
+          D=$(docker compose exec -T postgres psql -U mlops -d retail -Atc "select max(date)+1 from sales_history")
+          curl -sf -X POST localhost:8000/predict -H 'content-type: application/json' \
+            -d "{\"instances\":[{\"store_id\":\"S01\",\"sku_id\":\"K001\",\"date\":\"$D\",\"promo\":0}]}" | tee /tmp/pred.json
+          grep -q '"prediction"' /tmp/pred.json
+          curl -s -o /dev/null -w "%{http_code}" -X POST localhost:8000/ground-truth -H 'content-type: application/json' -d '{"records":[]}' | grep -q 422
+          curl -sf localhost:8000/metrics | grep -E 'retail_predictions_total|retail_model_info'
+      - name: monitoring refresh + retrain job
+        run: |
+          curl -sf -X POST localhost:8000/monitoring/refresh -H "X-API-Key: change-me-locally" > /dev/null
+          docker compose run --rm jobs python -m retail_mlops retrain --force   # no fresh data -> deferred
+          curl -sf -X POST localhost:8000/monitoring/refresh -H "X-API-Key: change-me-locally" > /dev/null
+          curl -sf localhost:8000/metrics | grep 'retail_retrain_runs{status="deferred"}'
+      - name: Prometheus really scrapes the API
+        run: |
+          sleep 20
+          curl -sf localhost:9090/api/v1/targets | python3 -c "import sys,json; t=json.load(sys.stdin)['data']['activeTargets']; assert any(x['labels']['job']=='retail-api' and x['health']=='up' for x in t), t"
+          curl -sf 'localhost:9090/api/v1/query?query=retail_predictions_total' | python3 -c "import sys,json; r=json.load(sys.stdin)['data']['result']; assert r, 'no series'; print(r)"
+          curl -sf 'localhost:9090/api/v1/rules' | python3 -c "import sys,json; g=json.load(sys.stdin)['data']['groups']; assert g and sum(len(x['rules']) for x in g)>=8"
+      - if: failure()
+        run: docker compose logs --tail=100
+      - if: always()
+        run: docker compose down -v

@@ -82,12 +82,7 @@ def training_frame(feats: pd.DataFrame, cfg: ForecastCfg) -> pd.DataFrame:
     return feats.dropna(subset=need).reset_index(drop=True)
 
 
-def time_split(frame: pd.DataFrame, cfg: ForecastCfg) -> dict[str, pd.DataFrame]:
-    last = frame["date"].max()
-    test_start = last - pd.Timedelta(days=cfg.test_days - 1)
-    valid_start = test_start - pd.Timedelta(days=cfg.valid_days)
-    return {
-        "train": frame[frame["date"] < valid_start],
-        "valid": frame[(frame["date"] >= valid_start) & (frame["date"] < test_start)],
-        "test": frame[frame["date"] >= test_start],
-    }
+def split_at(frame: pd.DataFrame, test_start: pd.Timestamp) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Strict temporal split: everything before test_start is available for fitting/selection, the rest is the
+    final held-out window."""
+    return frame[frame["date"] < test_start], frame[frame["date"] >= test_start]

@@ -42,6 +42,7 @@ def build_report(engine: Engine, bundle: ModelBundle, cfg: MonitoringCfg, now: d
         "prediction_drift": prediction_drift(bundle.reference["__prediction"], preds["prediction"], cfg)
         if len(preds) else {"status": "insufficient_data", "psi": None},
         "performance": performance_report(engine, since, bundle.reference_wape, cfg.perf_degradation_ratio,
-                                          cfg.min_ground_truth, model_version=bundle.version),
+                                          cfg.min_ground_truth, model_version=bundle.version,
+                                          maturity_coverage=cfg.maturity_coverage),
     }
     return report

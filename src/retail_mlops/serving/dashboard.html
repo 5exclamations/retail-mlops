@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Forecast Ops Dashboard</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--ink:#1c2430;--mute:#6b7685;--line:#e4e8ee;--accent:#2f6fed;--ok:#1f9d63;--warn:#d98e04;--bad:#d64545}
+@media (prefers-color-scheme:dark){:root{--bg:#0f141b;--card:#171e28;--ink:#e6ebf2;--mute:#8d99aa;--line:#263041;--accent:#6b9cff;--ok:#3ec28a;--warn:#e8b13a;--bad:#f06a6a}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 system-ui,-apple-system,Segoe UI,sans-serif}
+header{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;padding:16px 24px;border-bottom:1px solid var(--line);background:var(--card)}
+h1{font-size:18px;margin:0;font-weight:650}h2{font-size:13px;text-transform:uppercase;letter-spacing:.05em;color:var(--mute);margin:0 0 10px;font-weight:600}
+.chip{font:12px ui-monospace,Menlo,monospace;background:var(--bg);border:1px solid var(--line);padding:3px 8px;border-radius:999px;color:var(--mute)}
+main{padding:20px 24px;display:grid;gap:16px;grid-template-columns:repeat(12,1fr);max-width:1280px;margin:0 auto}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;grid-column:span 12}
+@media(min-width:900px){.s3{grid-column:span 3}.s4{grid-column:span 4}.s6{grid-column:span 6}.s8{grid-column:span 8}}
+.big{font-size:28px;font-weight:650;font-variant-numeric:tabular-nums}.sub{color:var(--mute);font-size:12px}
+table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}th,td{padding:6px 8px;text-align:right;border-bottom:1px solid var(--line)}th:first-child,td:first-child{text-align:left}th{color:var(--mute);font-weight:600;font-size:12px}
+.bar{display:grid;grid-template-columns:130px 1fr 56px;gap:8px;align-items:center;margin:5px 0;font-size:12px}.track{background:var(--bg);border-radius:4px;height:10px;position:relative;overflow:hidden}.fill{height:100%;border-radius:4px;background:var(--accent)}
+.ok{color:var(--ok)}.warn{color:var(--warn)}.alert,.bad,.failed,.rejected{color:var(--bad)}.promoted{color:var(--ok)}
+.note{color:var(--mute);font-size:12px;margin-top:8px}.empty{color:var(--mute);padding:8px 0}
+</style>
+</head>
+<body>
+<header><h1>Forecast Ops</h1><span class="chip" id="model">loading…</span><span class="chip" id="upd"></span><span class="chip">synthetic data</span></header>
+<main>
+  <section class="card s3"><h2>Live WAPE</h2><div class="big" id="wape">–</div><div class="sub" id="wape-sub"></div></section>
+  <section class="card s3"><h2>Live bias</h2><div class="big" id="bias">–</div><div class="sub">+ = over-forecast</div></section>
+  <section class="card s3"><h2>Ground-truth coverage</h2><div class="big" id="cov">–</div><div class="sub" id="cov-sub"></div></section>
+  <section class="card s3"><h2>Input drift</h2><div class="big" id="drift">–</div><div class="sub" id="drift-sub"></div></section>
+  <section class="card s6"><h2>Model vs baselines (held-out test window)</h2><table id="cmp"></table><div class="note" id="cmp-note"></div></section>
+  <section class="card s6"><h2>Promotion gates (latest model)</h2><table id="gates"></table></section>
+  <section class="card s6"><h2>Feature drift (PSI vs training reference)</h2><div id="psi"></div><div class="note">warn ≥ 0.10 · alert ≥ 0.25 and KS-significant</div></section>
+  <section class="card s6"><h2>Live WAPE by forecast horizon</h2><div id="hor"></div><div class="note" id="hor-note"></div></section>
+  <section class="card"><h2>Retraining history</h2><table id="hist"></table></section>
+</main>
+<script>
+const $=id=>document.getElementById(id), pct=(x,d=1)=>x==null?'–':(x*100).toFixed(d)+'%', f=(x,d=3)=>x==null?'–':Number(x).toFixed(d);
+async function j(u){const r=await fetch(u);if(!r.ok)throw new Error(u+' '+r.status);return r.json()}
+function bars(el,rows,max,cls){el.innerHTML=rows.length?rows.map(r=>`<div class="bar"><span>${r.k}</span><div class="track"><div class="fill" style="width:${Math.min(100,r.v/max*100)}%;background:${r.c||'var(--accent)'}"></div></div><span class="${r.cls||''}">${r.t}</span></div>`).join(''):'<div class="empty">no data yet</div>'}
+async function load(){
+  try{const m=await j('/model');
+    $('model').textContent=`${m.name} v${m.version} · ${m.algorithm}`;
+    const t=m.test_metrics,b=m.baselines_test||{};
+    $('cmp').innerHTML='<tr><th>model</th><th>WAPE</th><th>MAE</th><th>bias</th></tr>'+
+      `<tr><td><b>${m.algorithm}</b></td><td><b>${f(t.wape)}</b></td><td>${f(t.mae,2)}</td><td>${pct(t.bias)}</td></tr>`+
+      Object.entries(b).map(([k,v])=>`<tr><td>${k}</td><td>${f(v.wape)}</td><td>${f(v.mae,2)}</td><td>${pct(v.bias)}</td></tr>`).join('');
+    $('cmp-note').textContent=`test window ${m.test_window[0]} → ${m.test_window[1]} · walk-forward CV WAPE ${f(m.backtest?.mean_wape)} ± ${f(m.backtest?.std_wape)}`;
+    $('gates').innerHTML=(m.gates?.checks||[]).map(c=>`<tr><td>${c.name}</td><td class="${c.passed?'ok':'bad'}" style="text-align:left">${c.passed?'PASS':'FAIL'} — ${c.detail}</td></tr>`).join('')||'<tr><td>–</td></tr>';
+  }catch(e){$('model').textContent='no model loaded'}
+  try{const r=await j('/monitoring/report'),p=r.performance||{},d=r.drift||{};
+    $('upd').textContent='report '+r.generated_at.slice(0,19)+'Z';
+    $('wape').textContent=p.status==='ok'?f(p.wape):'–';
+    $('wape-sub').textContent=p.status==='ok'?`reference ${f(p.reference_wape)} · ×${f(p.wape_ratio,2)}${p.degraded?' · DEGRADED':''}`:`need ≥ ${p.min_ground_truth} matured actuals (have ${p.n_with_ground_truth})`;
+    $('bias').textContent=p.status==='ok'?pct(p.bias):'–';
+    $('cov').textContent=pct(p.coverage,0);$('cov-sub').textContent=`${p.n_with_ground_truth} scored · ${p.n_pending} pending · ${p.n_retrospective} retrospective`;
+    $('drift').textContent=d.status==='ok'?(d.drifted?'DRIFTED':'stable'):'n/a';$('drift').className='big '+(d.drifted?'bad':'ok');
+    $('drift-sub').textContent=d.status==='ok'?`${pct(d.drift_share,0)} of features in alert · ${d.n_current} rows`:`insufficient data (${d.n_current||0})`;
+    bars($('psi'),(d.features||[]).map(x=>({k:x.feature,v:x.psi,t:f(x.psi,2),cls:x.status,c:x.status==='alert'?'var(--bad)':x.status==='warn'?'var(--warn)':'var(--ok)'})),0.5);
+    const h=p.by_horizon||{};bars($('hor'),Object.keys(h).sort((a,b)=>a-b).map(k=>({k:'+'+k+' day'+(k>1?'s':''),v:h[k].wape,t:f(h[k].wape)})),0.6);
+    $('hor-note').textContent=Object.keys(h).length?'Model inputs are lead-invariant (all lags ≥ 7 days), so flat bars are expected.':'';
+  }catch(e){$('wape-sub').textContent='no monitoring report yet — POST /monitoring/refresh'}
+  try{const h=await j('/retraining/history');
+    $('hist').innerHTML='<tr><th>#</th><th>finished</th><th>trigger</th><th>status</th><th>version</th></tr>'+(h.map(r=>`<tr><td>${r.id}</td><td>${(r.finished_at||'').slice(0,19)}</td><td style="text-align:left">${r.trigger}</td><td class="${r.status}">${r.status}</td><td>${r.model_version||'–'}</td></tr>`).join('')||'<tr><td colspan=5 class="empty">no retraining runs yet</td></tr>');
+  }catch(e){}
+}
+load();setInterval(load,30000);
+</script>
+</body>
+</html>

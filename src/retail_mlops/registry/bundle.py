@@ -8,11 +8,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import mlflow
+import mlflow.artifacts
 import pandas as pd
 from mlflow import MlflowClient
 
 from retail_mlops.config import Config
 from retail_mlops.features.engineering import build_features, feature_columns
+from retail_mlops.registry.integrity import verify
 
 BUNDLE_DIR = "bundle"
 
@@ -62,8 +64,10 @@ def load_bundle(cfg: Config, version: str | None = None, alias: str | None = Non
     name = cfg.mlflow.model_name
     mv = (client.get_model_version(name, str(version)) if version is not None
           else client.get_model_version_by_alias(name, alias or cfg.mlflow.champion_alias))
-    model = mlflow.sklearn.load_model(f"models:/{name}/{mv.version}")
     with tempfile.TemporaryDirectory() as d:
+        model_dir = mlflow.artifacts.download_artifacts(artifact_uri=f"models:/{name}/{mv.version}", dst_path=d)
+        verify(model_dir, mv.tags.get("model_sha256"))  # integrity BEFORE deserialising anything
+        model = mlflow.sklearn.load_model(model_dir)
         local = Path(client.download_artifacts(mv.run_id, BUNDLE_DIR, d))
         trained_cfg = Config.model_validate_json((local / "config.json").read_text())
         metadata = json.loads((local / "metadata.json").read_text())

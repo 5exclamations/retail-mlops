@@ -6,8 +6,9 @@ data:
   raw_path: data/smoke/sales.csv
   processed_path: data/smoke/features.parquet
 forecast:
-  valid_days: 28
   test_days: 28
+  backtest_folds: 2
+  backtest_step_days: 14
 models:
   hgb:
     learning_rate: 0.1
@@ -19,3 +20,5 @@ models:
 monitoring:
   min_samples: 50
   min_ground_truth: 30
+gates:
+  min_holdout_days: 7

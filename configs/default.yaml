@@ -12,5 +12,6 @@ forecast:
   horizon: 7
   lags: [7, 14, 21, 28]
   rolling_windows: [7, 28]
-  valid_days: 56
   test_days: 56
+  backtest_folds: 3
+  backtest_step_days: 28

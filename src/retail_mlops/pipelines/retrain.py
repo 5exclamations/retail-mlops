@@ -61,8 +61,10 @@ def run_retraining(cfg: Config, engine: Engine, force: bool = False, dry_run: bo
             raw = raw[raw["date"] > raw["date"].max() - pd.Timedelta(days=cfg.retrain.training_window_days)]
         raw = raw.assign(date=raw["date"].dt.strftime("%Y-%m-%d"))
         result = run_training(cfg, raw, trigger="retrain:" + reasons[0].split(":")[0])
-        status = {"promoted": "promoted", "rejected": "rejected", "data_invalid": "failed"}.get(result.outcome, result.outcome)
+        status = {"promoted": "promoted", "rejected": "rejected", "data_invalid": "failed",
+                  "insufficient_holdout": "deferred"}.get(result.outcome, result.outcome)
         summary.update(status=status, outcome=result.outcome, mlflow_run_id=result.run_id, model_version=result.version,
+                       rejection_reasons=result.reasons,
                        gates=result.gates.to_dict() if result.gates else None,
                        validation_errors=[c.detail for c in result.validation.errors] if result.validation else None)
         update_retrain(engine, rid, finished_at=datetime.now(UTC).replace(tzinfo=None), status=status,

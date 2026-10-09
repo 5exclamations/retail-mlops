@@ -35,10 +35,19 @@ class Metrics:
         self.live_bias = Gauge("retail_live_bias", "Relative bias over recent predictions with ground truth", registry=r)
         self.gt_coverage = Gauge("retail_ground_truth_coverage", "Share of recent predictions that have actuals", registry=r)
         self.gt_samples = Gauge("retail_ground_truth_samples", "Recent predictions with actuals", registry=r)
+        self.live_wape_by_horizon = Gauge("retail_live_wape_by_horizon", "Live WAPE per forecast horizon (days)", ["horizon"], registry=r)
+        self.pending = Gauge("retail_pending_predictions", "Recent predictions whose actuals have not matured", registry=r)
+        self.model_trained_ts = Gauge("retail_model_trained_timestamp_seconds", "Training time of the served model", registry=r)
+        self.monitor_refresh_ts = Gauge("retail_monitoring_last_refresh_timestamp_seconds", "Last successful monitoring refresh", registry=r)
+        self.retrain_runs = Gauge("retail_retrain_runs", "Retraining runs recorded, by final status", ["status"], registry=r)
+        self.retrain_last_ts = Gauge("retail_retrain_last_finished_timestamp_seconds", "Finish time of the latest retrain run", ["status"], registry=r)
         self.perf_degraded = Gauge("retail_performance_degraded", "1 if live WAPE exceeds the degradation threshold", registry=r)
 
-    def set_model(self, name: str, version: str, run_id: str, reference_wape: float | None) -> None:
+    def set_model(self, name: str, version: str, run_id: str, reference_wape: float | None,
+                  trained_at_ts: float | None = None) -> None:
         self.model_info.clear()
+        if trained_at_ts:
+            self.model_trained_ts.set(trained_at_ts)
         self.model_info.labels(name, str(version), run_id).set(1)
         self.model_reference_wape.set(reference_wape if reference_wape is not None else float("nan"))
 
@@ -54,10 +63,21 @@ class Metrics:
         if p.get("psi") is not None:
             self.prediction_psi.set(p["psi"])
         perf = report.get("performance", {})
+        self.pending.set(perf.get("n_pending", 0))
         self.gt_coverage.set(perf.get("coverage", 0.0))
+        for h, m in perf.get("by_horizon", {}).items():
+            self.live_wape_by_horizon.labels(h).set(m["wape"])
         self.gt_samples.set(perf.get("n_with_ground_truth", 0))
         if perf.get("status") == "ok":
             self.live_wape.set(perf["wape"])
             self.live_mae.set(perf["mae"])
             self.live_bias.set(perf["bias"])
             self.perf_degraded.set(1 if perf.get("degraded") else 0)
+
+    def update_retrains(self, rows: list[dict]) -> None:
+        """rows: [{status, n, last_finished_ts}] aggregated from the retrain_runs table."""
+        self.retrain_runs.clear()
+        for r in rows:
+            self.retrain_runs.labels(r["status"]).set(r["n"])
+            if r.get("last_finished_ts"):
+                self.retrain_last_ts.labels(r["status"]).set(r["last_finished_ts"])

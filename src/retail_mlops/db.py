@@ -49,6 +49,7 @@ prediction_log = Table(
     Column("sku_id", String(16), nullable=False),
     Column("target_date", Date, nullable=False),
     Column("prediction", Float, nullable=False),
+    Column("horizon", Integer),  # days between last observed sales and target_date; <=0 = retrospective
     Column("features", Text),  # JSON of the model inputs, used for drift monitoring
     Index("ix_pred_series_date", "store_id", "sku_id", "target_date"),
     Index("ix_pred_created", "created_at"),
@@ -163,3 +164,29 @@ def update_retrain(engine: Engine, run_id: int, **kw) -> None:
         kw["details"] = json.dumps(kw["details"], default=str)
     with engine.begin() as conn:
         conn.execute(retrain_runs.update().where(retrain_runs.c.id == run_id).values(**kw))
+
+
+def retrain_summary(engine: Engine) -> list[dict]:
+    """Counts and latest finish time per status, for Prometheus."""
+    with engine.connect() as c:
+        rows = c.execute(select(retrain_runs.c.status, retrain_runs.c.finished_at)).all()
+    agg: dict[str, dict] = {}
+    for status, fin in rows:
+        a = agg.setdefault(status, {"status": status, "n": 0, "last_finished_ts": None})
+        a["n"] += 1
+        if fin is not None:
+            ts = fin.replace(tzinfo=UTC).timestamp()
+            a["last_finished_ts"] = max(a["last_finished_ts"] or 0, ts)
+    return list(agg.values())
+
+
+def read_retrain_history(engine: Engine, limit: int = 20) -> list[dict]:
+    with engine.connect() as c:
+        rows = c.execute(select(retrain_runs).order_by(retrain_runs.c.id.desc()).limit(limit)).mappings().all()
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["details"] = json.loads(d["details"]) if d.get("details") else {}
+        d["details"].pop("monitoring", None)
+        out.append({k: (v.isoformat() if hasattr(v, "isoformat") else v) for k, v in d.items()})
+    return out

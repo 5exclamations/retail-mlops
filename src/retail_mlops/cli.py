@@ -80,6 +80,8 @@ def cmd_train(args) -> int:
         print(res.validation.summary())
     if res.gates:
         print("gates:\n" + res.gates.summary())
+    elif res.reasons:
+        print("reasons: " + "; ".join(res.reasons))
     if res.metrics:
         print("selected-model metrics:", json.dumps(res.metrics, indent=2))
     if args.report:
@@ -122,6 +124,27 @@ def cmd_retrain(args) -> int:
     return 1 if s.get("status") == "failed" else 0
 
 
+def cmd_models(args) -> int:
+    """List every registered version with its provenance (history is never deleted)."""
+    from retail_mlops.registry import store
+
+    cfg = _cfg(args)
+    client = store.client_for(cfg)
+    aliases: dict[str, list[str]] = {}
+    for a in (cfg.mlflow.champion_alias, cfg.mlflow.previous_alias, cfg.mlflow.candidate_alias):
+        v = store.alias_version(client, cfg, a)
+        if v:
+            aliases.setdefault(v, []).append(a)
+    for mv in sorted(client.search_model_versions(f"name='{cfg.mlflow.model_name}'"), key=lambda m: int(m.version)):
+        t = mv.tags
+        print(f"v{mv.version:>3} stage={t.get('stage', '-'):<10} aliases={','.join(aliases.get(str(mv.version), [])) or '-':<18} "
+              f"test_wape={t.get('test_wape', '-')} data_end={t.get('data_end', '-')} data={t.get('data_hash', '-')} "
+              f"sha={t.get('model_sha256', '-')[:10]} git={t.get('git_sha', '-')}")
+        if t.get("rejection_reasons"):
+            print(f"      rejected because: {t['rejection_reasons']}")
+    return 0
+
+
 def cmd_rollback(args) -> int:
     from retail_mlops.registry import store
 
@@ -158,6 +181,8 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("retrain", help="retrain if a trigger fires")
     s.add_argument("--force", action="store_true"); s.add_argument("--dry-run", action="store_true")
     s.set_defaults(fn=cmd_retrain)
+    s = sub.add_parser("models", help="list registered model versions and provenance")
+    s.set_defaults(fn=cmd_models)
     s = sub.add_parser("rollback", help="point champion back at the previous version")
     s.set_defaults(fn=cmd_rollback)
 

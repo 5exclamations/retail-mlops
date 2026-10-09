@@ -89,14 +89,16 @@ def forecast(engine: Engine, bundle: ModelBundle, instances: list[dict], source:
     keyed["promo"] = req["promo"].to_numpy()
     preds = bundle.predict_features(keyed)
     low_history = keyed["lag_28"].isna().to_numpy()
+    horizons = [max(0, (r.date - last_seen[(r.store_id, r.sku_id)]).days) for r in keyed.itertuples()]
 
     results, rows = [], []
     for i, r in enumerate(keyed.itertuples()):
         results.append({"store_id": r.store_id, "sku_id": r.sku_id, "date": r.date.date().isoformat(),
                         "prediction": round(float(preds[i]), 3), "low_history": bool(low_history[i]),
+                        "horizon_days": horizons[i],
                         "model_version": bundle.version})
         rows.append({"request_id": request_id, "source": source, "model_name": bundle.name,
                      "model_version": bundle.version, "store_id": r.store_id, "sku_id": r.sku_id,
-                     "target_date": r.date.date(), "prediction": float(preds[i]),
+                     "target_date": r.date.date(), "prediction": float(preds[i]), "horizon": horizons[i],
                      "features": json.dumps({c: _clean(keyed.iloc[i][c]) for c in bundle.columns})})
     return results, rows
