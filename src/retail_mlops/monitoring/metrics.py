@@ -36,6 +36,8 @@ class Metrics:
         self.gt_coverage = Gauge("retail_ground_truth_coverage", "Share of recent predictions that have actuals", registry=r)
         self.gt_samples = Gauge("retail_ground_truth_samples", "Recent predictions with actuals", registry=r)
         self.live_wape_by_horizon = Gauge("retail_live_wape_by_horizon", "Live WAPE per forecast horizon (days)", ["horizon"], registry=r)
+        self.live_bias_cat = Gauge("retail_live_bias_by_category", "Live relative bias per category (+ = over-forecast)", ["category"], registry=r)
+        self.live_wape_cat = Gauge("retail_live_wape_by_category", "Live WAPE per category", ["category"], registry=r)
         self.pending = Gauge("retail_pending_predictions", "Recent predictions whose actuals have not matured", registry=r)
         self.model_trained_ts = Gauge("retail_model_trained_timestamp_seconds", "Training time of the served model", registry=r)
         self.monitor_refresh_ts = Gauge("retail_monitoring_last_refresh_timestamp_seconds", "Last successful monitoring refresh", registry=r)
@@ -65,6 +67,9 @@ class Metrics:
         perf = report.get("performance", {})
         self.pending.set(perf.get("n_pending", 0))
         self.gt_coverage.set(perf.get("coverage", 0.0))
+        for c, m in perf.get("by_category", {}).items():
+            self.live_bias_cat.labels(c).set(m["bias"])
+            self.live_wape_cat.labels(c).set(m["wape"])
         for h, m in perf.get("by_horizon", {}).items():
             self.live_wape_by_horizon.labels(h).set(m["wape"])
         self.gt_samples.set(perf.get("n_with_ground_truth", 0))

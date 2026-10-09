@@ -29,7 +29,7 @@ services:
       --artifacts-destination /mlartifacts --serve-artifacts
       --disable-security-middleware
     depends_on: {postgres: {condition: service_healthy}}
-    volumes: ["mlartifacts:/mlartifacts"]
+    volumes: ["mlartifacts:/mlartifacts"]  # volume inherits app-user ownership from the image
     ports: ["127.0.0.1:5000:5000"]
 
   api:

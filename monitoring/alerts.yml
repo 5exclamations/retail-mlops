@@ -23,6 +23,11 @@ groups:
         expr: retail_performance_degraded == 1
         for: 1h
         annotations: {summary: "live WAPE >= 1.25x the training-time test WAPE"}
+      - alert: CategoryBiasHigh
+        # offsetting category errors can hide in the aggregate bias (seen in the drift demo: -14% / +15%)
+        expr: abs(retail_live_bias_by_category) > 0.10
+        for: 1h
+        annotations: {summary: "a category is systematically over/under-forecast by more than 10%"}
       - alert: GroundTruthMissing
         # forecasts are being made but no accuracy can be computed
         expr: retail_pending_predictions > 500 and retail_ground_truth_samples == 0

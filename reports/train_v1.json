@@ -1,0 +1,68 @@
+{
+  "outcome": "promoted",
+  "run_id": "6d18bcba1633457387d12273f81eca40",
+  "version": "1",
+  "selected_model": "hist_gradient_boosting",
+  "metrics": {
+    "backtest": {
+      "mean_wape": 0.288240279354856,
+      "std_wape": 0.000527634111502832,
+      "pooled": {
+        "mae": 12.811049287307945,
+        "rmse": 19.515930643274718,
+        "wape": 0.28824876981753694,
+        "bias": -0.02393292741624538,
+        "n": 13440
+      }
+    },
+    "test": {
+      "mae": 11.922971406783475,
+      "rmse": 17.686238510285143,
+      "wape": 0.28758900199689325,
+      "bias": -0.009741813493820004,
+      "n": 8960
+    }
+  },
+  "reasons": [],
+  "gates": {
+    "passed": true,
+    "reasons": [],
+    "checks": [
+      {
+        "name": "data_validation",
+        "passed": true,
+        "value": null,
+        "threshold": null,
+        "detail": "raw data passed validation"
+      },
+      {
+        "name": "beats_baseline",
+        "passed": true,
+        "value": 0.26735443235725836,
+        "threshold": 0.03,
+        "detail": "candidate WAPE 0.2876 vs best baseline 0.3925 (+26.7% relative, need >= 3.0%)"
+      },
+      {
+        "name": "bias_within_bound",
+        "passed": true,
+        "value": 0.009741813493820004,
+        "threshold": 0.05,
+        "detail": "|bias| 0.0097 (max 0.05)"
+      },
+      {
+        "name": "no_segment_regression",
+        "passed": true,
+        "value": -0.1460984559611592,
+        "threshold": 0.05,
+        "detail": "worst category vs baseline: household (-14.6%, max +5.0%)"
+      },
+      {
+        "name": "improves_on_champion",
+        "passed": true,
+        "value": null,
+        "threshold": null,
+        "detail": "no champion yet; the first model only needs to clear the other gates"
+      }
+    ]
+  }
+}

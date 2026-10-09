@@ -6,7 +6,7 @@ RUN pip install -r requirements.txt
 COPY src ./src
 COPY configs ./configs
 COPY scripts ./scripts
-RUN pip install --no-deps -e . && useradd -m app && mkdir -p /app/data && chown -R app /app
+RUN pip install --no-deps -e . && useradd -m app && mkdir -p /app/data /mlartifacts && chown -R app /app /mlartifacts
 USER app
 EXPOSE 8000
 HEALTHCHECK --interval=15s --timeout=3s --start-period=20s CMD python -c "import urllib.request as u; u.urlopen('http://localhost:8000/health')"

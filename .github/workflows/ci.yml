@@ -81,7 +81,7 @@ jobs:
       - run: pip-audit -r requirements.txt
       - run: bandit -r src -ll
       - name: secret scan
-        run: docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:latest detect --source /repo --no-banner
+        run: docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:latest detect --source /repo --no-banner -v --redact
 
   compose-e2e:
     runs-on: ubuntu-latest
