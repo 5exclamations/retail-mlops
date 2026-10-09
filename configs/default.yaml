@@ -1,0 +1,16 @@
+# Default configuration. Every key is optional; see src/retail_mlops/config.py for the schema.
+seed: 42
+database_url: sqlite:///retail.db       # override with DATABASE_URL (Postgres in docker-compose)
+data:
+  n_stores: 8
+  n_skus: 20
+  start_date: "2023-01-01"
+  n_days: 730
+mlflow:
+  tracking_uri: sqlite:///mlflow.db     # override with MLFLOW_TRACKING_URI
+forecast:
+  horizon: 7
+  lags: [7, 14, 21, 28]
+  rolling_windows: [7, 28]
+  valid_days: 56
+  test_days: 56

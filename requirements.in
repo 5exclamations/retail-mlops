@@ -1,0 +1,13 @@
+numpy
+pandas
+pyarrow
+scipy
+scikit-learn
+mlflow
+fastapi
+uvicorn
+pydantic
+sqlalchemy
+psycopg2-binary
+prometheus-client
+pyyaml

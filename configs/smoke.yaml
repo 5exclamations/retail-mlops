@@ -1,0 +1,21 @@
+# Small, fast configuration used by CI smoke tests and unit tests.
+data:
+  n_stores: 3
+  n_skus: 6
+  n_days: 300
+  raw_path: data/smoke/sales.csv
+  processed_path: data/smoke/features.parquet
+forecast:
+  valid_days: 28
+  test_days: 28
+models:
+  hgb:
+    learning_rate: 0.1
+    max_iter: 80
+    max_leaf_nodes: 15
+    min_samples_leaf: 20
+    l2_regularization: 1.0
+  reference_sample_size: 3000
+monitoring:
+  min_samples: 50
+  min_ground_truth: 30

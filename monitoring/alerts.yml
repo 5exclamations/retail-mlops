@@ -1,0 +1,23 @@
+groups:
+  - name: retail-forecast
+    rules:
+      - alert: HighPredictionLatency
+        expr: histogram_quantile(0.95, sum(rate(retail_http_request_duration_seconds_bucket{endpoint="/predict"}[5m])) by (le)) > 1
+        for: 5m
+        annotations: {summary: "p95 /predict latency above 1s"}
+      - alert: PredictionErrorRate
+        expr: sum(rate(retail_prediction_errors_total{type!="validation"}[5m])) > 0.05
+        for: 5m
+        annotations: {summary: "server-side prediction errors"}
+      - alert: InputDriftDetected
+        expr: retail_input_drift_detected == 1
+        for: 30m
+        annotations: {summary: "share of drifting input features above threshold"}
+      - alert: PredictionDistributionShift
+        expr: retail_prediction_psi > 0.25
+        for: 30m
+        annotations: {summary: "prediction PSI above 0.25"}
+      - alert: ForecastAccuracyDegraded
+        expr: retail_performance_degraded == 1
+        for: 1h
+        annotations: {summary: "live WAPE far above training-time test WAPE"}

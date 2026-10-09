@@ -1,0 +1,51 @@
+# Local, CPU-only stack: Postgres (history, prediction log, MLflow backend) + MLflow server + API + Prometheus.
+x-app: &app
+  build: .
+  environment: &env
+    DATABASE_URL: postgresql+psycopg2://mlops:mlops@postgres:5432/retail
+    MLFLOW_TRACKING_URI: http://mlflow:5000
+  depends_on:
+    postgres: {condition: service_healthy}
+    mlflow: {condition: service_started}
+  volumes: ["./data:/app/data"]
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment: {POSTGRES_USER: mlops, POSTGRES_PASSWORD: mlops, POSTGRES_DB: retail}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./scripts/init-mlflow-db.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck: {test: ["CMD-SHELL", "pg_isready -U mlops -d retail"], interval: 5s, retries: 10}
+    ports: ["5432:5432"]
+
+  mlflow:
+    build: .
+    command: >
+      mlflow server --host 0.0.0.0 --port 5000
+      --backend-store-uri postgresql+psycopg2://mlops:mlops@postgres:5432/mlflow
+      --artifacts-destination /mlartifacts --serve-artifacts
+      --disable-security-middleware
+    depends_on: {postgres: {condition: service_healthy}}
+    volumes: ["mlartifacts:/mlartifacts"]
+    ports: ["5000:5000"]
+
+  api:
+    <<: *app
+    environment: {<<: *env, ADMIN_API_KEY: change-me}
+    ports: ["8000:8000"]
+
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro
+    ports: ["9090:9090"]
+    depends_on: [api]
+
+  # one-shot jobs:  docker compose run --rm jobs python -m retail_mlops train --source db
+  jobs:
+    <<: *app
+    profiles: ["jobs"]
+
+volumes: {pgdata: {}, mlartifacts: {}}

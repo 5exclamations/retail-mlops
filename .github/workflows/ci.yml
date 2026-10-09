@@ -1,0 +1,69 @@
+name: ci
+on: [push, pull_request]
+env:
+  MLFLOW_DISABLE_AGENT_HINT: "1"
+jobs:
+  lint-and-unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12", cache: pip}
+      - run: pip install -r requirements.txt pytest pytest-cov httpx ruff && pip install --no-deps -e .
+      - run: ruff check src tests
+      - run: pytest -m unit --cov=retail_mlops --cov-report=term-missing
+
+  data-validation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12", cache: pip}
+      - run: pip install -r requirements.txt && pip install --no-deps -e .
+      - run: python -m retail_mlops --config configs/smoke.yaml generate
+      - run: python -m retail_mlops --config configs/smoke.yaml validate --report reports/validation.json
+      - uses: actions/upload-artifact@v4
+        with: {name: validation-report, path: reports/}
+
+  training-smoke-and-evaluation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12", cache: pip}
+      - run: pip install -r requirements.txt && pip install --no-deps -e .
+      - run: python -m retail_mlops --config configs/smoke.yaml generate
+      # full default dataset: the candidate must beat baselines and clear every promotion gate
+      - run: python -m retail_mlops generate && python -m retail_mlops train --require-promotion --report reports/train.json
+      - uses: actions/upload-artifact@v4
+        with: {name: training-report, path: reports/}
+
+  integration-and-api:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env: {POSTGRES_USER: mlops, POSTGRES_PASSWORD: mlops, POSTGRES_DB: retail_test}
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U mlops" --health-interval 5s --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgresql+psycopg2://mlops:mlops@localhost:5432/retail_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12", cache: pip}
+      - run: pip install -r requirements.txt pytest httpx && pip install --no-deps -e .
+      - run: pytest -m "integration or api"   # API tests run against Postgres
+
+  docker-build:
+    runs-on: ubuntu-latest
+    needs: [lint-and-unit]
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t retail-mlops:ci .
+      - run: docker run --rm retail-mlops:ci python -m retail_mlops --help
+      - run: |
+          docker run -d --name api -p 8000:8000 retail-mlops:ci
+          for i in $(seq 1 30); do curl -sf localhost:8000/health && exit 0; sleep 2; done
+          docker logs api; exit 1
